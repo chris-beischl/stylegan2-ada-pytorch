@@ -16,9 +16,13 @@ sessions: `probe/progress.md`. Read both before doing anything.
 NVIDIA Source Code License (`LICENSE.txt`): non-commercial research use
 only; redistribution must keep the licence and notices. Works that remain
 separable from the code or merely call its interfaces are not derivative
-works (§1). So: PROBE never imports or copies code from here; it calls this
-repository as a separate program (subprocess) and records its commit.
-Never move code from this repository into PROBE.
+works (§1). So: never copy or move code from this repository into PROBE.
+Decided 2026-10-08 (PROBE D-51): until PROBE is published, PROBE uses this
+fork as an optional, commit-pinned git dependency. GAN training runs here as
+a subprocess (this repo's own env); PROBE imports the modules by name only to
+load the trained generator pickle and backpropagate through `G.synthesis`.
+PLAN's logic (paths, classifiers, losses) lives in PROBE, never here. After
+publication PLAN becomes an external PROBE plugin package.
 
 ## Branches and diffs
 

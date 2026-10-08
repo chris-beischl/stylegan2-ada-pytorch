@@ -69,7 +69,7 @@ all 662 images are fine.
 
 **S6 Training run.** `uv run python train.py --outdir=out/train
 --data=out/data/shenzhen256.zip --cond=1 --mirror=0 --gpus=1
---cfg=paper256 --metrics=none --kimg=200 --snap=50 --seed=0
+--cfg=paper256 --metrics=none --kimg=200 --snap=12 --seed=0
 --workers=<= cpus`. `--mirror=0`: chest X-rays are not left/right
 symmetric. Record: sec/kimg, GPU memory, augment probability p, losses,
 whether `fakes*.png` look like X-rays of both classes. Stop early if the
@@ -86,12 +86,14 @@ real images with their class (`--num-steps` default 1000 and fewer);
 record time per projection and the LPIPS/pixel distance to the target.
 PLAN needs 5 projections per identity: cost x 5 x n_train per member set.
 
-**S9 PLAN path smoke test.** Port nothing into PROBE yet; in `probe/`,
-run PLAN's `get_privacy_path` (from github.com/perceivelab/PLAN,
-`privacy_path.py`, MIT) with the S6 generator and two tiny stand-in
-classifiers (untrained ResNet-18 heads) for a few steps: checks that W
-broadcasting, `noise_mode='const'`, clamping to [-1, 1] and the gradient
-through `G.synthesis` work. Record time per optimisation step for T = 50.
+**S9 Gradient through G in PROBE's environment** (replaces the PLAN path
+smoke test; PLAN's code belongs in PROBE, D-51). Load the S6 snapshot with
+PROBE's `.venv/bin/python` and only this repo on `PYTHONPATH` (no install,
+nothing written in PROBE; custom ops forced to the reference
+implementation, so no build is attempted). Backpropagate a fixed dummy loss
+from `G.synthesis` to a path of T = 50 broadcast w (`noise_mode='const'`),
+compare the gradient with the same computation in this repo's env
+(compiled ops), and time a forward/backward step for both.
 
 **S10 Report and decisions** (in `probe/progress.md`, for the user and
 PROBE's planning):
@@ -101,9 +103,9 @@ PROBE's planning):
   for one PLAN cell (GAN on n_train members + projections + paths);
 - determinism outcome;
 - environment: separate `.venv` (default) or shared torch version;
-- proposal for the interface PROBE will call (subcommands such as
-  `train`, `project`, `generate`, `path`; files in/out, explicit seeds,
-  metadata JSON) — to be planned as a PROBE PR afterwards.
+- interface for PROBE (D-51): what `train.py` needs as a subprocess (data
+  zip, seeds, options, outputs), what PROBE imports to load G, packaging
+  of this repo as a git dependency — to be planned as a PROBE PR.
 
 ## Acceptance
 

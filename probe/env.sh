@@ -5,6 +5,7 @@
 _repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export PYTHONPATH=$_repo
 export TORCH_EXTENSIONS_DIR=$_repo/.torch_extensions
+export DNNLIB_CACHE_DIR=$_repo/.cache/dnnlib  # downloads (VGG16 for projection) stay in the repo
 export UV_PYTHON_INSTALL_DIR=$_repo/.uv-python
 export CUDA_HOME=$_repo/.venv/lib/python3.12/site-packages/nvidia/cu13
 export TORCH_CUDA_ARCH_LIST=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1)

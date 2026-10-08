@@ -35,6 +35,7 @@ def project(
     noise_ramp_length          = 0.75,
     regularize_noise_weight    = 1e5,
     verbose                    = False,
+    c: torch.Tensor            = None, # PROBE: [1, c_dim] one-hot class for a conditional G, None otherwise.
     device: torch.device
 ):
     assert target.shape == (G.img_channels, G.img_resolution, G.img_resolution)
@@ -48,7 +49,8 @@ def project(
     # Compute w stats.
     logprint(f'Computing W midpoint and stddev using {w_avg_samples} samples...')
     z_samples = np.random.RandomState(123).randn(w_avg_samples, G.z_dim)
-    w_samples = G.mapping(torch.from_numpy(z_samples).to(device), None)  # [N, L, C]
+    c_samples = None if c is None else c.to(device).repeat([w_avg_samples, 1]) # PROBE: conditional G needs c; w_avg per class.
+    w_samples = G.mapping(torch.from_numpy(z_samples).to(device), c_samples)  # [N, L, C]
     w_samples = w_samples[:, :1, :].cpu().numpy().astype(np.float32)       # [N, 1, C]
     w_avg = np.mean(w_samples, axis=0, keepdims=True)      # [1, 1, C]
     w_std = (np.sum((w_samples - w_avg) ** 2) / w_avg_samples) ** 0.5
@@ -138,6 +140,7 @@ def project(
 @click.option('--num-steps',              help='Number of optimization steps', type=int, default=1000, show_default=True)
 @click.option('--seed',                   help='Random seed', type=int, default=303, show_default=True)
 @click.option('--save-video',             help='Save an mp4 video of optimization progress', type=bool, default=True, show_default=True)
+@click.option('--class', 'class_idx',     help='Class label of the target (required for a conditional network)', type=int) # PROBE
 @click.option('--outdir',                 help='Where to save the output images', required=True, metavar='DIR')
 def run_projection(
     network_pkl: str,
@@ -145,7 +148,8 @@ def run_projection(
     outdir: str,
     save_video: bool,
     seed: int,
-    num_steps: int
+    num_steps: int,
+    class_idx: int = None,
 ):
     """Project given image to the latent space of pretrained network pickle.
 
@@ -172,12 +176,21 @@ def run_projection(
     target_pil = target_pil.resize((G.img_resolution, G.img_resolution), PIL.Image.LANCZOS)
     target_uint8 = np.array(target_pil, dtype=np.uint8)
 
+    # PROBE: one-hot class label for a conditional G (as generate.py builds it).
+    c = None
+    if G.c_dim != 0:
+        if class_idx is None:
+            raise click.ClickException('Must specify --class when using a conditional network')
+        c = torch.zeros([1, G.c_dim], device=device)
+        c[:, class_idx] = 1
+
     # Optimize projection.
     start_time = perf_counter()
     projected_w_steps = project(
         G,
         target=torch.tensor(target_uint8.transpose([2, 0, 1]), device=device), # pylint: disable=not-callable
         num_steps=num_steps,
+        c=c, # PROBE
         device=device,
         verbose=True
     )
