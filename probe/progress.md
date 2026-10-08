@@ -7,7 +7,7 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
 
 - Fork of NVIDIA upstream `d72cc7d` on github.com/chris-beischl; branch
   `probe` for our work, `main` untouched.
-- S0-S5 done; S6 under way (training runs with compiled custom ops).
+- Spike S0-S10 done (2026-10-08); report in section S10 below.
 - S0: node `atlas`, partition `universe`, 1x A40 (46 GB), driver 595.91.07
   (CUDA 13.2), 2 CPUs, job RAM cap 8 GB (cgroup), 16 h limit. No `nvcc`, no
   `/usr/local/cuda`; gcc/g++ 13.3 present; 27 TB free on the volume.
@@ -28,7 +28,9 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
 
 ## Next step
 
-S6 200 kimg run, then S8 projection, S7 determinism, S9 gradient check in PROBE's venv, S10. D-51 (PROBE): this fork becomes a git dependency of PROBE; PLAN code lives in PROBE.
+PROBE PR plan for PLAN with this fork as git dependency (D-51), using the
+S10 interface below. Open measurements first (S10 open points), above all
+GAN quality vs. training length.
 
 ## Patches on `probe` (each: file, reason, step)
 
@@ -62,7 +64,7 @@ S6 200 kimg run, then S8 projection, S7 determinism, S9 gradient check in PROBE'
 | grid_sample double backward | works natively | S4 |
 | sec/kimg (256 px, cond, batch) | | S6 |
 | GPU memory | | S6 |
-| bitwise reproducible | | S7 |
+| bitwise reproducible | no (S7: 0/112 G tensors equal after 8 kimg, same seed) | S7 |
 | time per projection | 85 s (1000 steps, A40, compiled ops); LPIPS dist 0.45-0.50 with the 200 kimg G | S8 |
 | time per path step (T = 50) | G fwd+bwd, 48 points: 319 ms compiled / 392 ms reference (peak 11.1 / 14.9 GB); classifiers extra | S9 |
 
@@ -127,3 +129,56 @@ Projections reproduce the coarse layout only (G undertrained). Cost for
 PLAN's 5 projections per identity: 85 s x 5 x n_train, e.g. ~59 GPU h for
 500 members at 1000 steps; fewer steps or batched projection would cut it
 (to measure).
+
+## S7 determinism
+
+Two runs `--kimg=8 --seed=0`, otherwise identical (`out/s7_{a,b}`, logs
+only): no parameter tensor bitwise equal (G 0/112, D 0/56, G_ema 0/112;
+max abs diff G 0.17, G_ema 0.016); G loss differs from the first tick
+(0.26879 vs 0.268798), by tick 2 strongly (8.10 vs 13.21), augment p
+0.010752 vs 0.011776. Likely sources: cuDNN benchmark (on by default,
+`--nobench`), atomics in conv / custom-op backward, amplified by ADA's
+feedback on p. Not tried: `--nobench=1` with
+`torch.use_deterministic_algorithms` (would need a patch). PROBE records
+the GAN stage as `deterministic = False`. These runs took 32-42 s/kimg vs
+28 earlier, probably CPU contention (2 CPUs on a shared node).
+
+## S10 report
+
+- **Runs:** yes, under Python 3.12 / torch 2.14.1+cu130, label-conditioned
+  256 x 256 (`--cfg=paper256 --cond=1 --mirror=0`). Patches: 5 for the
+  stack + F5 projector (list above). F2/F3 need nothing.
+- **Custom ops:** compiled with pip-wheel nvcc 13.0 in this repo's env
+  (managed Python, `probe/env.sh`); reference ops work everywhere,
+  identical outputs, training 3.3x slower (92 vs 28 s/kimg), G
+  forward+backward only 1.23x slower.
+- **Cost (A40):** training 28 s/kimg (200 kimg = 1.6 h, still blurry);
+  projection 85 s per image at 1000 steps; path step (48 points) 0.32 s
+  for G plus the classifiers, PLAN's 500 steps -> roughly 3-4 min per path.
+  One PLAN cell = GAN (unknown kimg, guess 15-40 h) + 5 x n_train
+  projections (~59 h for 500 members) + paths: projections and GAN length
+  dominate; both need measuring/reducing before a grid is planned.
+- **Determinism:** not bitwise reproducible (S7).
+- **Environment:** separate env for training (this repo); PROBE's own
+  venv suffices for loading G and backpropagating (S9), needs only the
+  fork and `requests` on the path.
+- **Interface for PROBE (D-51):**
+  1. PROBE writes the member set as a `dataset_tool` zip (PNG + 
+     `dataset.json` labels; uint8 round trip as in `export_shenzhen.py`).
+  2. Subprocess in this repo: `source probe/env.sh; uv run python train.py
+     --data=<zip> --outdir=<dir> --cond=1 --mirror=0 --gpus=1
+     --cfg=paper256 --metrics=none --kimg=<K> --snap=<ticks> --seed=<derived>
+     --workers=<cpus>`, then `probe/export_generator.py` -> `G_ema.pkl`.
+     PROBE records fork commit, options, timings, GAN checksum.
+  3. PROBE imports this repo by name and `pickle.load`s `G_ema.pkl`;
+     projections via `projector.project(G, target, c=..., device=...)`
+     (imports by name) or PROBE's own loop; paths are PROBE code.
+  4. Packaging for the git dependency: make `dnnlib`, `torch_utils`,
+     `training`, `legacy`, `projector` installable (pyproject build
+     section); check which of them unpickling really needs.
+- **Open points:** GAN quality vs. kimg (longer run, maybe FID with
+  `--metrics`, needs the Inception download); projection cost (fewer steps,
+  batched targets); whether `--nobench` + deterministic algorithms makes
+  training reproducible; LPIPS VGG16 comes from NVIDIA's CDN (licence and
+  provenance to note in PROBE); RGB vs. 1-channel GAN (PROBE samples are
+  RGB, X-rays are grey: 1 channel would be cheaper but needs a conversion).
