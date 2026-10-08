@@ -26,6 +26,7 @@ _plugin = None
 def _init():
     global _inited, _plugin
     if not _inited:
+        _inited = True # PROBE: upstream never set this, so a failed build was retried on every call (as bias_act.py does it).
         sources = ['upfirdn2d.cpp', 'upfirdn2d.cu']
         sources = [os.path.join(os.path.dirname(__file__), s) for s in sources]
         try:

@@ -29,8 +29,17 @@ import urllib
 import urllib.request
 import uuid
 
-from distutils.util import strtobool
 from typing import Any, List, Tuple, Union
+
+
+def strtobool(val: str) -> bool:
+    # PROBE: distutils was removed in Python 3.12; same semantics as distutils.util.strtobool.
+    val = val.lower()
+    if val in ("y", "yes", "t", "true", "on", "1"):
+        return True
+    if val in ("n", "no", "f", "false", "off", "0"):
+        return False
+    raise ValueError(f"invalid truth value {val!r}")
 
 
 # Util classes

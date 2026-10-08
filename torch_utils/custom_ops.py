@@ -104,11 +104,11 @@ def get_plugin(module_name, sources, **build_kwargs):
                     # wait until done and continue.
                     baton.wait()
             digest_sources = [os.path.join(digest_build_dir, os.path.basename(x)) for x in sources]
-            torch.utils.cpp_extension.load(name=module_name, build_directory=build_dir,
+            # PROBE: newer torch returns the module from load() but no longer makes it importable by name.
+            module = torch.utils.cpp_extension.load(name=module_name, build_directory=build_dir,
                 verbose=verbose_build, sources=digest_sources, **build_kwargs)
         else:
-            torch.utils.cpp_extension.load(name=module_name, verbose=verbose_build, sources=sources, **build_kwargs)
-        module = importlib.import_module(module_name)
+            module = torch.utils.cpp_extension.load(name=module_name, verbose=verbose_build, sources=sources, **build_kwargs)
 
     except:
         if verbosity == 'brief':

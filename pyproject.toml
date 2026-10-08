@@ -1,0 +1,32 @@
+# PROBE: environment for running NVIDIA's StyleGAN2-ADA under Python 3.12 /
+# torch 2.14 (same torch build as PROBE). Not a package: scripts run in place.
+[project]
+name = "stylegan2-ada-pytorch-probe"
+version = "0.0.0"
+requires-python = "==3.12.*"
+dependencies = [
+    "torch==2.14.1",
+    "numpy",
+    "pillow",
+    "click",
+    "requests",
+    "tqdm",
+    "ninja",
+    "imageio",
+    "scipy",   # training/augment.py (filter design)
+    "psutil",  # training/training_loop.py (memory stats)
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+# nvcc + headers matching torch's CUDA 13.0, so bias_act/upfirdn2d compile without a
+# system CUDA toolkit (the nodes have none). Use: uv sync --group cuda-build and
+# CUDA_HOME=.venv/lib/python3.12/site-packages/nvidia/cu13
+cuda-build = [
+    "nvidia-cuda-nvcc==13.0.88",
+    "nvidia-cuda-crt==13.0.88",
+    "nvidia-cuda-cccl==13.0.85",
+    "nvidia-nvvm==13.0.88",  # nvcc does not pin it; 13.4 would pair a newer cicc with nvcc 13.0
+]

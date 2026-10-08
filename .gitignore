@@ -4,3 +4,5 @@ out/
 .venv/
 .torch_extensions/
 *.pyc
+.uv-python/
+.cuda_link/

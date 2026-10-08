@@ -20,6 +20,7 @@ import torch
 #----------------------------------------------------------------------------
 
 enabled = False                     # Enable the custom op by setting this to true.
+_warned = False # PROBE: see _should_use_custom_op().
 weight_gradients_disabled = False   # Forcefully disable computation of gradients with respect to the weights.
 
 @contextlib.contextmanager
@@ -52,7 +53,10 @@ def _should_use_custom_op(input):
         return False
     if any(torch.__version__.startswith(x) for x in ['1.7.', '1.8.', '1.9']):
         return True
-    warnings.warn(f'conv2d_gradfix not supported on PyTorch {torch.__version__}. Falling back to torch.nn.functional.conv2d().')
+    global _warned
+    if not _warned: # PROBE: warn once; other modules' catch_warnings() reset the registry, so the warning repeated on every call.
+        _warned = True
+        warnings.warn(f'conv2d_gradfix not supported on PyTorch {torch.__version__}. Falling back to torch.nn.functional.conv2d().')
     return False
 
 def _tuple_of_ints(xs, ndim):
