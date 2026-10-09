@@ -28,8 +28,11 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
 
 ## Next step
 
-PROBE implements PLAN (PROBE `docs/plan.md` PR 17–20) against the commit
-that adds F-1 … F-4 below; this repo only changes in a fork session.
+PROBE pins the commit with F-5 (`--snap=0`: final network snapshot only;
+`--image-snap`: image grids for PROBE's live W&B monitoring, PROBE D-54) and
+implements PLAN against F-1 … F-5 (PROBE `docs/plan.md` PR 17–21). This
+repo changes only with the user's OK, in a fork session or explicitly
+allowed from PROBE.
 
 ## Patches on `probe` (each: file, reason, step)
 
@@ -55,6 +58,14 @@ that adds F-1 … F-4 below; this repo only changes in a fork session.
   makes `_init()` return False before any build attempt (PROBE's venv
   cannot compile; an attempt prints tracebacks and writes to
   `~/.cache/torch_extensions`). 2026-10-09.
+- F-5 `train.py`, `training/training_loop.py`: `--snap=0` keeps only the final
+  network snapshot (the loop treats `network_snapshot_ticks=None` as "final
+  only"; upstream: none at all), `--image-snap=N` sets the image-grid
+  interval separately (default `--snap`, so upstream behaviour is unchanged).
+  PROBE monitors training from the images and needs no intermediate 307 MB
+  pickles (user, 2026-10-09; done from a PROBE session with the user's OK).
+  Dry-run checked (option handling); the loop change runs in PROBE's slow
+  GAN test on a GPU. 2026-10-09.
 - New: `pyproject.toml`, `uv.lock`, `probe/env.sh`, `probe/spike_ops.py`
   (S3/S4 test), `probe/export_shenzhen.py` (S5).
 - F2 (grid_sample double backward) needs nothing: works natively in torch

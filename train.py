@@ -33,6 +33,7 @@ def setup_training_loop_kwargs(
     # General options (not included in desc).
     gpus       = None, # Number of GPUs: <int>, default = 1 gpu
     snap       = None, # Snapshot interval: <int>, default = 50 ticks
+    image_snap = None, # PROBE: image snapshot interval: <int>, default = snap
     metrics    = None, # List of metric names: [], ['fid50k_full'] (default), ...
     seed       = None, # Random seed: <int>, default = 0
 
@@ -81,10 +82,14 @@ def setup_training_loop_kwargs(
     if snap is None:
         snap = 50
     assert isinstance(snap, int)
-    if snap < 1:
-        raise UserError('--snap must be at least 1')
-    args.image_snapshot_ticks = snap
-    args.network_snapshot_ticks = snap
+    # PROBE: --snap=0 keeps only the final network snapshot (PROBE exports G_ema from it);
+    # --image-snap sets the image grid interval separately (default: --snap as upstream).
+    if snap < 0:
+        raise UserError('--snap must be at least 0')
+    if image_snap is not None and image_snap < 1:
+        raise UserError('--image-snap must be at least 1')
+    args.image_snapshot_ticks = image_snap if image_snap is not None else (snap or None)
+    args.network_snapshot_ticks = snap or None
 
     if metrics is None:
         metrics = ['fid50k_full']
@@ -402,6 +407,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--outdir', help='Where to save the results', required=True, metavar='DIR')
 @click.option('--gpus', help='Number of GPUs to use [default: 1]', type=int, metavar='INT')
 @click.option('--snap', help='Snapshot interval [default: 50 ticks]', type=int, metavar='INT')
+@click.option('--image-snap', help='Image snapshot interval [default: --snap]', type=int, metavar='INT') # PROBE: separate from network snapshots
 @click.option('--metrics', help='Comma-separated list or "none" [default: fid50k_full]', type=CommaSeparatedList())
 @click.option('--seed', help='Random seed [default: 0]', type=int, metavar='INT')
 @click.option('-n', '--dry-run', help='Print training options and exit', is_flag=True)
