@@ -28,9 +28,8 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
 
 ## Next step
 
-PROBE PR plan for PLAN with this fork as git dependency (D-51), using the
-S10 interface below. Open measurements first (S10 open points), above all
-GAN quality vs. training length.
+PROBE implements PLAN (PROBE `docs/plan.md` PR 17–20) against the commit
+that adds F-1 … F-4 below; this repo only changes in a fork session.
 
 ## Patches on `probe` (each: file, reason, step)
 
@@ -49,6 +48,13 @@ GAN quality vs. training length.
 - `torch_utils/custom_ops.py`: use the module returned by
   `cpp_extension.load()`; torch 2.14 no longer makes it importable by name
   (`ModuleNotFoundError` after a successful build). S3.
+- F-1 `dnnlib/util.py`: `requests` imported inside `is_url`/`open_url`, not at
+  module level, so unpickling a generator needs only torch and numpy
+  (PROBE's venv has no `requests`). 2026-10-09.
+- F-2 `torch_utils/ops/{bias_act,upfirdn2d}.py`: `STYLEGAN2ADA_REFERENCE_OPS=1`
+  makes `_init()` return False before any build attempt (PROBE's venv
+  cannot compile; an attempt prints tracebacks and writes to
+  `~/.cache/torch_extensions`). 2026-10-09.
 - New: `pyproject.toml`, `uv.lock`, `probe/env.sh`, `probe/spike_ops.py`
   (S3/S4 test), `probe/export_shenzhen.py` (S5).
 - F2 (grid_sample double backward) needs nothing: works natively in torch
@@ -182,3 +188,39 @@ the GAN stage as `deterministic = False`. These runs took 32-42 s/kimg vs
   training reproducible; LPIPS VGG16 comes from NVIDIA's CDN (licence and
   provenance to note in PROBE); RGB vs. 1-channel GAN (PROBE samples are
   RGB, X-rays are grey: 1 channel would be cheaper but needs a conversion).
+
+## Interface for PROBE (F-3, F-4; 2026-10-09)
+
+- **F-3 `probe/train_gan.sh --outdir=DIR [train.py options]`** (+
+  `probe/finish_training.py`): sources `env.sh`, runs `train.py --outdir=DIR/run`
+  (log `DIR/train.log`), writes `DIR/G_ema.pkl` (last snapshot, G only) and
+  `DIR/backend.json` (commit, dirty, snapshot, kimg, mean sec/kimg without
+  tick 0, augment p, training options, generator shape, torch). Refuses a
+  `DIR` that already holds a run, exit 2 without `--outdir`. Tested from
+  another working directory with a minimal environment (`env -i`): 4 kimg,
+  27.9 s/kimg, exit 0. Needs a synced env (`uv run --no-sync`).
+- **F-4 `projector_batch.py`** (top level, not in `probe/`: PROBE imports it
+  from the checkout and `probe` is PROBE's own package name):
+  `project_batch(G, targets_uint8, c, *, seed, device, vgg16_path,
+  num_steps=1000, init='mean'|'sample', batch_size=16, ...) -> (w [N, w_dim],
+  dist [N])`; `probe/fetch_vgg16.sh` puts VGG16 into `.cache/vgg16.pt`
+  (SHA-256 checked). Differences to `projector.project` in its docstring
+  (batched, per-row seeded streams, local VGG16, noise fixed at 'const').
+  Measured (200 kimg G, 4 Shenzhen targets, 300 steps):
+
+| Env / ops | batch 1 | batch 4 | batch 16 | batch 32 | peak GB (32) |
+|---|---|---|---|---|---|
+| fork env, compiled | 17.5 s/img | 5.9 | 5.46 | 3.84 | 15.4 |
+| PROBE venv, reference (F-2) | 20.9 s/img | 7.8 | 4.41 | 4.29 | 18.0 |
+
+  At 1000 steps: ~13-14 s per image at batch 32 vs 85 s for NVIDIA's
+  projector, so 5 x 463 projections ~9 h instead of ~55 h (fewer steps cut
+  further). LPIPS dist 0.47-0.52, as NVIDIA's projector with this G.
+  `init='sample'`: 5 projections of one target are distinct (pairwise w
+  distance 21-24) at equal dist. **Determinism:** with
+  `torch.use_deterministic_algorithms(True)` (PROBE's default) the same call
+  is bitwise reproducible and targets do not interact (altering one target
+  leaves the others bitwise unchanged); without it, GPU nondeterminism is
+  amplified by the optimisation (w differs ~0.1 after 10 steps). Different
+  `batch_size` values give numerically different (statistically equal)
+  results, since cuDNN/cuBLAS pick other kernels: PROBE must hash it.

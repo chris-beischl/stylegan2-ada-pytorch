@@ -20,7 +20,6 @@ import types
 import io
 import pickle
 import re
-import requests
 import html
 import hashlib
 import glob
@@ -376,6 +375,7 @@ def is_url(obj: Any, allow_file_urls: bool = False) -> bool:
         return False
     if allow_file_urls and obj.startswith('file://'):
         return True
+    import requests # PROBE: imported here, not at module level, so loading a pickle needs no requests.
     try:
         res = requests.compat.urlparse(obj)
         if not res.scheme or not res.netloc or not "." in res.netloc:
@@ -433,6 +433,7 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
     # Download.
     url_name = None
     url_data = None
+    import requests # PROBE: see is_url().
     with requests.Session() as session:
         if verbose:
             print("Downloading %s ..." % url, end="", flush=True)

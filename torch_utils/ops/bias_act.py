@@ -40,6 +40,8 @@ _null_tensor = torch.empty([0])
 
 def _init():
     global _inited, _plugin
+    if os.environ.get('STYLEGAN2ADA_REFERENCE_OPS') == '1': # PROBE: reference ops without a build attempt
+        return False                                         # (hosts that cannot compile, e.g. PROBE's venv).
     if not _inited:
         _inited = True
         sources = ['bias_act.cpp', 'bias_act.cu']
