@@ -28,8 +28,10 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
 
 ## Status (2026-10-15, performance study, jobs 299844 and 300188)
 
-Task `probe/perf-handover.md`, results in "Performance (2026-10)" at the end. Two opt-in patches
-(P-1, P-2); defaults bitwise unchanged. PROBE pins the new commit only if it adopts them.
+Task `probe/perf-handover.md`, results in "Performance (2026-10)" at the end. **Decision (user,
+2026-10-15): nothing adopted.** Projections stay at 1000 steps (PLAN's paper setting); the
+speed-ups (~11 % of the grid) are not worth the change. P-1/P-2 were committed in 96f9e9f and
+reverted afterwards; PROBE keeps pinning 113de6a.
 
 ## Next step
 
@@ -74,11 +76,11 @@ allowed from PROBE.
   pickles (user, 2026-10-09; done from a PROBE session with the user's OK).
   Dry-run checked (option handling); the loop change runs in PROBE's slow
   GAN test on a GPU. 2026-10-09.
-- P-1 `torch_utils/custom_ops.py`: `STYLEGAN2ADA_PREBUILT_OPS=1` loads `bias_act`/`upfirdn2d` from
+- (reverted, see Status 2026-10-15) P-1 `torch_utils/custom_ops.py`: `STYLEGAN2ADA_PREBUILT_OPS=1` loads `bias_act`/`upfirdn2d` from
   this checkout's `.torch_extensions/` (or `TORCH_EXTENSIONS_DIR`) without nvcc/ninja, after checking
   that `build.ninja` names the current source digest; otherwise `_init()` warns and returns False
   (reference ops). Lets PROBE's venv use the compiled ops. 2026-10-15.
-- P-2 `projector_batch.py`: `vgg_bf16=False` option, bf16 autocast for VGG16 only. 2026-10-15.
+- (reverted) P-2 `projector_batch.py`: `vgg_bf16=False` option, bf16 autocast for VGG16 only. 2026-10-15.
 - New: `probe/bench_perf.{py,sh,sbatch}` (performance study). 2026-10-15.
 - New: `pyproject.toml`, `uv.lock`, `probe/env.sh`, `probe/spike_ops.py`
   (S3/S4 test), `probe/export_shenzhen.py` (S5).
@@ -376,6 +378,9 @@ steady state). Recommendation: workers/nobench **skip** (no effect); batch 128 *
 (needs a quality check of the GAN, e.g. FID or PROBE's downstream metrics).
 
 ### PROBE-side changes (for a PROBE session)
+
+**Decision (user, 2026-10-15): none adopted; projections stay at 1000 steps (paper setting).**
+P-1/P-2 (96f9e9f) reverted; the list below documents what the options would have cost and saved.
 
 Baseline for 5 data seeds x 2 datasets (PROBE timings above): training 80 GPU h, projections
 106 GPU h, paths 36 GPU h, rest ~12 GPU h; total ~235 GPU h.

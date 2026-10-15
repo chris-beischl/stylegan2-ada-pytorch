@@ -6,7 +6,9 @@ Run with PROBE's venv, this checkout on the path (as S9; nothing is written in P
     ../PROBE/.venv/bin/python probe/bench_perf.py compare A.npz B.npz
 DIR is a GAN store entry (G_ema.pkl + meta.json). Determinism settings are PROBE's. The switches
 --ops compiled and --amp vgg use the fork's options (STYLEGAN2ADA_PREBUILT_OPS, vgg_bf16); --tf32,
---cl and --compile are applied here. One JSON line per run goes to stdout and --log.
+--cl and --compile are applied here. --ops compiled and --amp vgg need the patches of commit 96f9e9f
+(reverted after the study); on later commits they fall back to the reference ops (ops_loaded false)
+or fail. One JSON line per run goes to stdout and --log.
 """
 import os
 
