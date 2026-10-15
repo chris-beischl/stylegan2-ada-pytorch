@@ -28,6 +28,9 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
 
 ## Next step
 
+**Open task (2026-10-15): GPU performance as PROBE uses the fork**, see
+`probe/perf-handover.md` (from a PROBE session at the user's request).
+
 PROBE pins the commit with F-5 (`--snap=0`: final network snapshot only;
 `--image-snap`: image grids for PROBE's live W&B monitoring, PROBE D-54) and
 implements PLAN against F-1 … F-5 (PROBE `docs/plan.md` PR 17–21). This
