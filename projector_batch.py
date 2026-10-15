@@ -13,7 +13,9 @@ Differences to project():
   shared by the whole batch and lives in a copy of G, so the returned w would not reproduce their
   images with the unmodified G, which PLAN uses to render;
 - init "mean" (as project(): class-mean w) or "sample" (w of a random z of the class): several
-  projections of one target need different starting points.
+  projections of one target need different starting points;
+- optional bf16 autocast for VGG16 (`vgg_bf16`, ~8 % faster at equal LPIPS distance, other
+  numbers; probe/progress.md "Performance (2026-10)").
 """
 import copy
 
@@ -29,10 +31,11 @@ def _generator(seed, key, device):
     return gen
 
 
-def _features(vgg16, images):
+def _features(vgg16, images, bf16=False):
     if images.shape[2] > 256:  # VGG was built for 224 x 224 images
         images = F.interpolate(images, size=(256, 256), mode='area')
-    return vgg16(images, resize_images=False, return_lpips=True)
+    with torch.autocast('cuda', dtype=torch.bfloat16, enabled=bf16):
+        return vgg16(images, resize_images=False, return_lpips=True).float()
 
 
 def project_batch(
@@ -46,6 +49,7 @@ def project_batch(
     num_steps: int = 1000,
     init: str = 'mean',             # 'mean' | 'sample'
     batch_size: int = 16,
+    vgg_bf16: bool = False,
     w_avg_samples: int = 10000,
     initial_learning_rate: float = 0.1,
     initial_noise_factor: float = 0.05,
@@ -88,7 +92,7 @@ def project_batch(
         hi = min(lo + batch_size, n)
         gens, std = rows[lo:hi], w_std[class_of_row[lo:hi]][:, None]
         with torch.no_grad():
-            target_features = _features(vgg16, targets[lo:hi].to(device).to(torch.float32))
+            target_features = _features(vgg16, targets[lo:hi].to(device).to(torch.float32), vgg_bf16)
         w_opt = w_init[lo:hi].clone().requires_grad_(True)
         optimizer = torch.optim.Adam([w_opt], betas=(0.9, 0.999), lr=initial_learning_rate)
         for step in range(num_steps):
@@ -102,13 +106,13 @@ def project_batch(
             w_noise = torch.stack([torch.randn([G.w_dim], generator=g, device=device) for g in gens]) * w_noise_scale
             ws = (w_opt + w_noise).unsqueeze(1).repeat([1, G.mapping.num_ws, 1])
             synth = (G.synthesis(ws, noise_mode='const') + 1) * (255 / 2)
-            dist = (target_features - _features(vgg16, synth)).square().sum(dim=1)
+            dist = (target_features - _features(vgg16, synth, vgg_bf16)).square().sum(dim=1)
             optimizer.zero_grad(set_to_none=True)
             dist.sum().backward()  # per-target terms: each w only receives its own gradient
             optimizer.step()
         with torch.no_grad():
             ws = w_opt.unsqueeze(1).repeat([1, G.mapping.num_ws, 1])
             synth = (G.synthesis(ws, noise_mode='const') + 1) * (255 / 2)
-            dist_out.append((target_features - _features(vgg16, synth)).square().sum(dim=1).cpu())
+            dist_out.append((target_features - _features(vgg16, synth, vgg_bf16)).square().sum(dim=1).cpu())
         w_out.append(w_opt.detach().cpu())
     return torch.cat(w_out), torch.cat(dist_out)

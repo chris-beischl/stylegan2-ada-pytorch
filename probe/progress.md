@@ -26,6 +26,11 @@ session. Plan: `probe/SPIKE.md`. Rules: `CLAUDE.md`.
   and `.cuda_link/libcudart.so` -> the wheel's `libcudart.so.13` on
   `LIBRARY_PATH`, since the wheel has no unversioned `.so` for `-lcudart`).
 
+## Status (2026-10-15, performance study, jobs 299844 and 300188)
+
+Task `probe/perf-handover.md`, results in "Performance (2026-10)" at the end. Two opt-in patches
+(P-1, P-2); defaults bitwise unchanged. PROBE pins the new commit only if it adopts them.
+
 ## Next step
 
 **Open task (2026-10-15): GPU performance as PROBE uses the fork**, see
@@ -69,6 +74,12 @@ allowed from PROBE.
   pickles (user, 2026-10-09; done from a PROBE session with the user's OK).
   Dry-run checked (option handling); the loop change runs in PROBE's slow
   GAN test on a GPU. 2026-10-09.
+- P-1 `torch_utils/custom_ops.py`: `STYLEGAN2ADA_PREBUILT_OPS=1` loads `bias_act`/`upfirdn2d` from
+  this checkout's `.torch_extensions/` (or `TORCH_EXTENSIONS_DIR`) without nvcc/ninja, after checking
+  that `build.ninja` names the current source digest; otherwise `_init()` warns and returns False
+  (reference ops). Lets PROBE's venv use the compiled ops. 2026-10-15.
+- P-2 `projector_batch.py`: `vgg_bf16=False` option, bf16 autocast for VGG16 only. 2026-10-15.
+- New: `probe/bench_perf.{py,sh,sbatch}` (performance study). 2026-10-15.
 - New: `pyproject.toml`, `uv.lock`, `probe/env.sh`, `probe/spike_ops.py`
   (S3/S4 test), `probe/export_shenzhen.py` (S5).
 - F2 (grid_sample double backward) needs nothing: works natively in torch
@@ -238,3 +249,157 @@ the GAN stage as `deterministic = False`. These runs took 32-42 s/kimg vs
   amplified by the optimisation (w differs ~0.1 after 10 steps). Different
   `batch_size` values give numerically different (statistically equal)
   results, since cuDNN/cuBLAS pick other kernels: PROBE must hash it.
+
+## Performance (2026-10)
+
+Task: `probe/perf-handover.md`. Jobs 299844 (2 h 04 min) and 300188 (20 min) on one A40
+(chameleon), 8 CPUs, 48 GB, as PROBE's PLAN jobs. Projection and path step run in PROBE's venv with
+PROBE's determinism settings (`probe/bench_perf.py`; `bash probe/bench_perf.sh proj path steps
+quality verify train`, results in `out/perf/*.jsonl`, `*_compare.txt`, `train.txt`). Data seed 0
+GANs from PROBE's store (Shenzhen `2c06ef60…`, 463 members; APTOS `f617292c…`, 577 members);
+32 members per run, spread over the classes, `init='sample'`, seed 0. "Result change" compares
+with the baseline (reference ops, cuDNN TF32 on, matmul TF32 off, batch 32): mean LPIPS dist
+difference ± its std over the 32 targets. Run-to-run time noise ~±5 % (projection; first run
+of a job ~15 % slower, cold caches), ±1 s/kimg per training tick.
+
+**Reproducibility.** Every tested setting is bitwise reproducible across two runs (projection w,
+path gradient): reference ops, compiled ops (P-1), bf16 VGG (P-2). Every change of numerics moves
+the projected w a lot (mean distance 10 after 100 steps, 16-25 after 1000; the optimisation is
+chaotic), while the LPIPS dist stays statistically equal. So each adopted change means new numbers
+(new hash), not wrong ones. The patched code with default options reproduces the earlier results
+bitwise; P-1 and P-2 reproduce the monkeypatched benchmark runs bitwise.
+
+### 1. Compiled ops in PROBE's process
+
+PROBE's venv (Python 3.12.3) imports the `.so` files built here (3.12.15): same torch, 3.12 ABI,
+libtorch/libcudart resolved from torch's wheel; no nvcc, no ninja. `cpp_extension.load` with
+`TORCH_EXTENSIONS_DIR` alone does not work (needs ninja), hence P-1. The build is sm_86 only
+(`TORCH_CUDA_ARCH_LIST` from the A40 in `env.sh`): on the cluster's A100 nodes (sm_80) the
+kernels would fail at launch (an error, not wrong numbers).
+
+| Setting | Projection s/target (1000 steps) | Peak GB | dist change | Path step 48 pts | Peak GB | Gradient vs reference |
+|---|---|---|---|---|---|---|
+| reference ops | 14.75 (Shenzhen) / 14.74 (APTOS) | 18.0 | – | 487 ms | 16.8 | – |
+| compiled ops (P-1) | 13.15 / 13.14 (−11 %) | 15.5 | −0.0003 ± 0.008 / −0.0007 ± 0.014 | 411 ms (−16 %) | 13.0 | cosine 0.9964 |
+
+Recommendation: **adopt** (cheap: P-1 plus a PROBE switch; reproducible; `--use_fast_math` numbers).
+
+### 2. TF32 / reduced precision
+
+Projection, Shenzhen, 100 steps, batch 32 (s for 32 targets):
+
+| Setting | s | Peak GB | dist change (100 steps) |
+|---|---|---|---|
+| baseline (cuDNN TF32 on = torch default, matmul off) | 48.9 | 18.0 | – |
+| all TF32 off | 53.4 (+9 %) | 18.0 | +0.005 ± 0.016 |
+| matmul TF32 on too | 49.1 (0 %) | 18.0 | +0.002 ± 0.009 |
+| bf16 autocast VGG16 (P-2) | 45.2 / 47.5 (−3 to −8 %) | 17.8 | +0.002 ± 0.012 |
+| bf16 VGG16 + channels_last VGG16 | 46.9 | 17.8 | +0.003 |
+| channels_last VGG16 only | 52.4 (+7 %) | 18.0 | +0.004 |
+| bf16 autocast over G too | fails: `AssertionError` in G (StyleGAN2 checks dtypes; its 4 top resolutions already run fp16) | | |
+
+At 1000 steps: bf16 VGG 13.57 / 13.55 s/target (−8 %), dist +0.0009 ± 0.008 (Shenzhen),
+−0.0003 ± 0.013 (APTOS). **Compiled ops + bf16 VGG: 11.96 / 11.96 s/target (−19 %), peak 15.3 GB,
+dist +0.0013 ± 0.004 / −0.0015 ± 0.013.** Path step: matmul TF32 487 ms (0 %), channels_last
+ResNets 492 ms (+1 %), bf16 over G fails as above.
+
+Training (`train.py`, Shenzhen zip, 12 kimg, mean of ticks 1-3):
+
+| Option | s/kimg | vs base |
+|---|---|---|
+| base (`--workers=4`, as PROBE) | 27.3 | – |
+| `--allow-tf32=1` | 25.7 (24.6 / 25.6 / 27.0) | −6 %, noisy |
+| `--nhwc=1` | 25.4 | −7 % |
+| `--allow-tf32=1 --nhwc=1` | 24.7 | −10 % |
+
+Recommendation: projection **adopt bf16 VGG (P-2)** with compiled ops; keep matmul TF32 off (no
+gain) and cuDNN TF32 on (−9 %), but pin it explicitly in PROBE rather than rely on torch's
+default. Training TF32/NHWC: **user decides** (~−10 %, from 3 ticks; GAN quality untested,
+would need full 1000 kimg runs; training is not reproducible anyway, S7).
+
+### 3. Batch size
+
+| Projection batch | s/target (100 steps) | Peak GB |
+|---|---|---|
+| 32 | 1.53 | 18.0 |
+| 64 | 1.49 (−3 %) | 34.9 |
+| 96, 128 | out of memory (46 GB) | |
+
+| Path points per step | ref ms/point | compiled ms/point | Peak GB (ref / compiled) |
+|---|---|---|---|
+| 48 | 10.15 | 8.56 | 16.8 / 13.0 |
+| 96 | 10.08 | 8.49 | 33.3 / 25.8 |
+| 144 | out of memory | 8.45 | – / 38.5 |
+
+Recommendation: **skip**. Projection batch 64 gains 3 % (noise level) at double memory; per-point
+path cost is flat, so optimising several paths at once does not pay. Keep batch 32 and `chunk` 50.
+
+### 4. torch.compile / channels_last
+
+`torch.compile(G.synthesis)` fails in PROBE's venv: Triton builds its launcher against `Python.h`,
+which the system Python 3.12.3 lacks. With `CPATH` pointing at the 3.12.15 headers of
+`.uv-python/` (benchmark only) it runs: path step 370 ms (−24 % vs reference, better than
+compiled ops' −16 %), peak 13.2 GB, gradient cosine 0.9963; 15 recompilations (new shapes);
+projection steady state not measured (100 steps = 110 s, dominated by compile time; G is
+recompiled per call because `project_batch` deep-copies it). Reproducibility not checked.
+channels_last: no gain (above). CUDA graphs: not tried (would need static shapes and the
+same work as compile).
+
+Recommendation: **user decides, later**: needs PROBE's venv on a uv-managed Python (headers),
+an inductor cache inside PROBE's run dirs, a determinism check, and compile time per process;
+gain over compiled ops is ~8 points on paths only (~3 GPU h for the grid below).
+
+### 5. Projection steps (method choice)
+
+LPIPS dist (mean over 32 targets; separate runs, since the lr schedule scales with `num_steps`):
+
+| Steps | 100 | 200 | 300 | 500 | 1000 |
+|---|---|---|---|---|---|
+| Shenzhen | 0.255 (+21 %) | 0.233 (+11 %) | 0.225 (+6 %) | 0.218 (+3 %) | 0.211 |
+| APTOS | 0.284 (+26 %) | 0.260 (+15 %) | 0.251 (+11 %) | 0.235 (+4 %) | 0.226 |
+
+Time is linear in steps (14.8 s/target per 1000 steps). No hard plateau; the curve flattens
+after ~500 steps. **User decides** (PLAN's paper setting is 1000).
+
+### 6. GAN training
+
+| Option | s/kimg | GPU memory | Note |
+|---|---|---|---|
+| base, `--workers=4` | 27.3 | 3.0 GB | as PROBE's GAN store (26.2-30.1) |
+| `--workers=1` | 27.3 | 3.0 GB | data loading is not the bottleneck |
+| `--nobench=1` | 27.1 | 2.6 GB at start | no loss; tick 0 26 s instead of 74 s (benchmark autotuning) |
+| `--batch=128` | 19.0 (−30 %) | 32-43 GB | changes the method (paper256: batch 64, lr tuned for it) |
+| TF32 / NHWC | see 2 | | |
+
+GPU utilisation 72-88 % averaged over the whole run including start-up (S6: 94-100 % in
+steady state). Recommendation: workers/nobench **skip** (no effect); batch 128 **user decides**
+(needs a quality check of the GAN, e.g. FID or PROBE's downstream metrics).
+
+### PROBE-side changes (for a PROBE session)
+
+Baseline for 5 data seeds x 2 datasets (PROBE timings above): training 80 GPU h, projections
+106 GPU h, paths 36 GPU h, rest ~12 GPU h; total ~235 GPU h.
+
+1. **Compiled ops for projection and paths** (adopt, ~17 GPU h): pin the commit with P-1;
+   `load_generator` sets `STYLEGAN2ADA_PREBUILT_OPS=1` instead of `STYLEGAN2ADA_REFERENCE_OPS=1`
+   (a hashed option, e.g. `ops: reference | prebuilt`); after unpickling, require
+   `torch_utils.ops.bias_act._init()` and `upfirdn2d._init()` to return True (P-1 falls back to the
+   reference ops with a warning otherwise, which would silently change numbers); hash the two
+   `.so` files (SHA-256) into the provenance/config; require compute capability 8.6 (A40) or
+   rebuild here with `TORCH_CUDA_ARCH_LIST="8.0;8.6"` first.
+2. **bf16 VGG16 in projection** (adopt, with 1: −19 % on projections, ~20 GPU h of 106 instead of
+   ~12): pass `vgg_bf16=True` to `project_batch` from a hashed config field.
+3. **Pin TF32 explicitly**: `torch.backends.cudnn.allow_tf32 = True` (today torch's default, worth
+   9 % in projection), matmul TF32 off. No new numbers.
+4. **Projection steps** (user decides): 500 steps halves projections (~43 GPU h with 1+2) at
+   +3-4 % LPIPS dist; 300 steps ~60 GPU h at +6-11 %.
+5. **Training** (user decides): `--allow-tf32=1 --nhwc=1` ~−10 % (~8 GPU h; needs a new hashed
+   `nhwc` option beside `allow_tf32`); `--batch=128` −30 % (~24 GPU h) but a method change. Both
+   change the GAN; quality untested.
+6. **No path batching**; keep `chunk` (per-point cost flat).
+7. **torch.compile** (later, ~3 GPU h over 1): only with a uv-managed Python for PROBE's venv.
+8. A new fork commit changes PROBE's GAN-store key (it includes the commit), although training code
+   is unchanged by P-1/P-2: stored GANs would be retrained unless the key ignores these commits.
+
+Adopting 1-3 saves ~26 GPU h (~11 % of the grid); with 4 at 500 steps ~69 GPU h (~29 %).
+

@@ -11,6 +11,7 @@ import glob
 import torch
 import torch.utils.cpp_extension
 import importlib
+import importlib.util # PROBE: _load_prebuilt
 import hashlib
 import shutil
 from pathlib import Path
@@ -38,6 +39,22 @@ def _find_compiler_bindir():
             return matches[-1]
     return None
 
+def _load_prebuilt(module_name, sources):
+    # PROBE: load a module built earlier in this checkout without build tools (PROBE's venv has no
+    # nvcc/ninja); refuse a build from other sources (digest dir as in get_plugin below).
+    src_dir = Path(os.path.dirname(sources[0]))
+    hash_md5 = hashlib.md5()
+    for src in sorted(x for x in src_dir.iterdir() if x.is_file()):
+        hash_md5.update(src.read_bytes())
+    ext_dir = os.environ.get('TORCH_EXTENSIONS_DIR', Path(__file__).resolve().parents[1] / '.torch_extensions')
+    build_dir = Path(ext_dir) / module_name
+    if hash_md5.hexdigest() not in (build_dir / 'build.ninja').read_text():
+        raise RuntimeError(f'{build_dir} was not built from the current sources of {module_name}')
+    spec = importlib.util.spec_from_file_location(module_name, build_dir / f'{module_name}.so')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 #----------------------------------------------------------------------------
 # Main entry point for compiling and loading C++/CUDA plugins.
 
@@ -48,6 +65,10 @@ def get_plugin(module_name, sources, **build_kwargs):
 
     # Already cached?
     if module_name in _cached_plugins:
+        return _cached_plugins[module_name]
+
+    if os.environ.get('STYLEGAN2ADA_PREBUILT_OPS') == '1': # PROBE: no build, see _load_prebuilt.
+        _cached_plugins[module_name] = _load_prebuilt(module_name, sources)
         return _cached_plugins[module_name]
 
     # Print status.
